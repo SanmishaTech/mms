@@ -46,7 +46,7 @@ class SendDailyAbhishekPrasadWpMsg extends Command
             if($receipt->is_wa_no){
                 Receipt::sendPrasadWhatsAppMessageDaily($receipt);
             }
-            \Log::info('Receipt name:', ['name' => $receipt->name]);
+            // \Log::info('Receipt name:', ['name' => $receipt->name]);
 
         }
         \Log::info("All today's Prasad whatsApp messages processed.");
