@@ -1515,6 +1515,8 @@ class ReportsController extends BaseController
 
         $receipts = Receipt::with(['receiptType','poojas.poojaType.devta']) // Eager load related poojas and receiptType
              ->where("cancelled", false)
+             ->whereNull('special_date')
+
             //  ->whereHas('receiptType', function ($query) use ($date) {
             //         $query->where('is_pooja', true);
             // })
@@ -1647,6 +1649,25 @@ class ReportsController extends BaseController
         }
         // uparane evening end
         // uparane and saree end
+
+        // specialDate start
+        $specialDateReceiptsQuery = Receipt::with(['receiptType']) // Eager load related poojas and receiptType
+        ->where("cancelled", false)
+        ->where("special_date",$date)
+        ->where("receipt_type_id", '!=', 9); // Exclude receipt_type_id = 9
+
+        // Get count
+        $specialDateReceiptCount = $specialDateReceiptsQuery->count();
+
+        // Get records
+        $specialDateReceipts = $specialDateReceiptsQuery->get();
+
+        $groupedReceipts = $specialDateReceipts->groupBy(function ($receipt) {
+            return $receipt->receiptType->receipt_type ?? 'Unknown Type'; // Group by receipt type name
+        })->map(function ($group) {
+            return $group->groupBy('gotra'); // Then group by gotra
+        });
+        // special Date end
     
         if(!$receipts){
             return $this->sendError("receipts not found", ['error'=>['receipts not found']]);
@@ -1660,6 +1681,8 @@ class ReportsController extends BaseController
             'sareeEveningDetails'=> $sareeEveningDetails,
             'uparaneDetails'=> $uparaneDetails,
             'uparaneEveningDetails'=> $uparaneEveningDetails,
+            'specialDateReceiptCount'=>$specialDateReceiptCount,
+            'groupedReceipts'=>$groupedReceipts,
         ];
 
         // Render the Blade view to HTML
@@ -1741,6 +1764,7 @@ class ReportsController extends BaseController
 
         $receipts = Receipt::with(['poojas.poojaType.devta', 'receiptType'])
             ->where("cancelled", false)
+            ->whereNull('special_date')
             // ->whereHas('receiptType', function ($query) use ($date) {
             //     $query->where("is_pooja", true);
             // })
@@ -1778,8 +1802,23 @@ class ReportsController extends BaseController
         });
         
         
-    
-        // $totalCount = $poojaTypeCounts->sum(); // Sum of all co
+        //   sparecial Date start
+         $specialDateReceiptsQuery = Receipt::with(['receiptType'])
+            ->where("cancelled", false)
+            ->where("special_date", $date)
+            ->where("receipt_type_id", '!=', 9); // Exclude receipt_type_id = 9
+
+
+            $specialDateReceiptCount = $specialDateReceiptsQuery->count();
+
+            $specialDateReceipts = $specialDateReceiptsQuery->get();
+            // Group by receipt type name and count
+            $receiptTypeCounts = $specialDateReceipts->groupBy(function ($receipt) {
+                return $receipt->receiptType->receipt_type ?? 'Unknown Type';
+            })->map(function ($group) {
+                return $group->count(); // Just count the number of receipts per receipt type
+            });
+        // spcialDate end
 
         if(!$receipts){
             return $this->sendError("receipts not found", ['error'=>['receipts not found']]);
@@ -1787,8 +1826,9 @@ class ReportsController extends BaseController
         
         $data = [
             'date' => $date,
-            // 'poojaTypeCountsByReceiptType' => $poojaTypeCountsByReceiptType,
             'poojaTypeEntries' => $poojaTypeEntries,
+            'receiptTypeCounts' => $receiptTypeCounts,
+            'specialDateReceiptCount'=>$specialDateReceiptCount,
         ];
 
         // Render the Blade view to HTML

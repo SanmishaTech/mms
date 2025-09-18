@@ -44,6 +44,31 @@
     <h4 style="margin:10px 0px 15px 0;">एकुण {{ $devtaName }}: {{ $totalNamesForDevta }}</h4>
 @endforeach
 
+       {{-- specialDate --}}
+    @foreach($groupedReceipts as $receiptTypeName => $gotraGroups)
+        <div style="width:100%; margin-top:5px; padding:0px">
+            <h3>{{ $receiptTypeName }}</h3>
+        </div>
+
+        @foreach($gotraGroups as $gotra => $items)
+            <div style="margin:0px; padding:0px; border-bottom: 1px solid gray;">
+                <h4>गोत्र: {{ $gotra }}</h4>
+                <div>
+                    @foreach($items as $item)
+                        <p>{{ $item->name }}</p>
+                    @endforeach
+                </div>
+                <p>एकुण: {{ $items->count() }}</p>
+            </div>
+        @endforeach
+
+        @php
+            $totalNames = $gotraGroups->flatMap(fn($group) => $group->pluck('name'))->count();
+        @endphp
+        <h4 style="margin:10px 0px 15px 0;">एकुण {{ $receiptTypeName }}: {{ $totalNames }}</h4>
+    @endforeach
+
+
 
     <div style="margin:0px; padding:0px; border-bottom: 1px solid gray;">
     </div>

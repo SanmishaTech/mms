@@ -82,6 +82,35 @@
             <td class="total-row">{{ $grandTotal }}</td>
         </tr>
     </tbody>
+
+    
+</table>
+{{-- <h3>Special Date Receipts Summary (By Receipt Type) - {{ \Carbon\Carbon::parse($date)->format('d/m/Y') }}</h3> --}}
+
+@php
+    $specialDateTotal = 0;
+@endphp
+
+<table>
+    <thead>
+        <tr>
+            <th style="width: 80%;">Receipt Type</th>
+            <th style="width: 20%; text-align: right;">Count</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach($receiptTypeCounts as $receiptType => $count)
+            <tr>
+                <td>{{ $receiptType }}</td>
+                <td style="text-align: right;">{{ $count }}</td>
+            </tr>
+            @php $specialDateTotal += $count; @endphp
+        @endforeach
+        <tr>
+            <td class="total-row">Grand Total</td>
+            <td class="total-row" style="text-align: right;">{{ $specialDateTotal }}</td>
+        </tr>
+    </tbody>
 </table>
 
 </body>
