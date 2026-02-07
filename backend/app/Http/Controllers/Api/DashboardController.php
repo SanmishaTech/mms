@@ -22,64 +22,86 @@ class DashboardController extends BaseController
     {
         $profileCount = Profile::count();
 
-        $today = now()->toDateString(); 
-        $receiptCountToday = Receipt::whereDate('created_at', $today)->count(); 
-        $totalAmountToday = Receipt::whereDate('created_at', $today)
-        ->where('cancelled',false)
-        ->sum('amount');
-        $cancelledReceipts = Receipt::whereDate('created_at', $today)
-                                    ->where('cancelled', true)
-                                    ->count();
+        $today = now()->toDateString();
+        $date = $today;
 
-         $date = now()->toDateString(); 
+        $todayStart = now()->startOfDay();
+        $todayEnd = now()->endOfDay();
 
-    $receipts = Receipt::with(['poojas.poojaType.devta'])  
-        ->where("cancelled", false)
-        ->whereHas('poojas', function ($query) use ($date) {
-            $query->where('date', $date);
-        })
-        ->get();
-    
-    $poojaDetails = $receipts->flatMap(function ($receipt) use ($date) {
-        return $receipt->poojas->filter(function ($pooja) use ($date) {
-            return $pooja->date == $date;  
-        })->map(function ($pooja) use ($receipt) {
+        $todayAggregates = Receipt::query()
+            ->whereBetween('created_at', [$todayStart, $todayEnd])
+            ->selectRaw('COUNT(*) as receipt_count_today')
+            ->selectRaw("SUM(CASE WHEN cancelled = 0 THEN amount ELSE 0 END) as total_amount_today")
+            ->selectRaw("SUM(CASE WHEN cancelled = 1 THEN 1 ELSE 0 END) as cancelled_receipts")
+            ->first();
+
+        $receiptCountToday = (int)($todayAggregates->receipt_count_today ?? 0);
+        $totalAmountToday = (float)($todayAggregates->total_amount_today ?? 0);
+        $cancelledReceipts = (int)($todayAggregates->cancelled_receipts ?? 0);
+
+        $poojaDetails = [];
+        $poojaRowsQuery = DB::table('receipts')
+            ->join('poojas', 'poojas.receipt_id', '=', 'receipts.id')
+            ->leftJoin('pooja_types', 'pooja_types.id', '=', 'poojas.pooja_type_id')
+            ->leftJoin('devtas', 'devtas.id', '=', 'pooja_types.devta_id')
+            ->where('receipts.cancelled', false)
+            ->where('poojas.date', $date)
+            ->select([
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+                'receipts.email as email',
+                'receipts.mobile as mobile',
+                'pooja_types.pooja_type as pooja_type',
+                'devtas.devta_name as devta_name',
+                'poojas.date as date',
+            ]);
+
+        foreach ($poojaRowsQuery->cursor() as $row) {
+            $poojaDetails[] = [
+                'name' => $row->name,
+                'gotra' => $row->gotra,
+                'email' => $row->email,
+                'mobile' => $row->mobile,
+                'pooja_type' => $row->pooja_type,
+                'devta_name' => $row->devta_name,
+                'date' => $row->date,
+            ];
+        }
+        $poojaDetails = collect($poojaDetails);
+
+        $hallRows = DB::table('receipts')
+            ->join('hall_receipts', 'hall_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.receipt_type_id', 9)
+            ->where('receipts.special_date', $today)
+            ->where('receipts.cancelled', false)
+            ->select([
+                'receipts.id as receipt_id',
+                'receipts.amount as amount',
+                'receipts.name as name',
+                'hall_receipts.hall as hall_name',
+                'hall_receipts.from_time as from_time',
+                'hall_receipts.to_time as to_time',
+                'hall_receipts.ac_charges as ac_charges',
+            ])
+            ->get();
+
+        // Step 1: Map raw data first
+        $hallBookingData = $hallRows->map(function ($row) {
+            $fromTime = $row->from_time ? \Carbon\Carbon::parse($row->from_time)->format('H:i:s') : null;
+            $toTime = $row->to_time ? \Carbon\Carbon::parse($row->to_time)->format('H:i:s') : null;
+
             return [
-                'name' => $receipt->name,  // User's name from receipt
-                'gotra' => $receipt->gotra,  // User's name from receipt
-                'email' => $receipt->email, // Email from receipt
-                'mobile' => $receipt->mobile, // Mobile from receipt
-                'pooja_type' => $pooja->poojaType->pooja_type,  // Name of the pooja type
-                'devta_name' => $pooja->poojaType->devta->devta_name, // Devta name from the related devta model
-                'date' => $pooja->date,  // Date of the pooja (today's date)
+                'receipt_id' => $row->receipt_id,
+                'hall_name' => $row->hall_name ?? 'N/A',
+                'from_time' => $fromTime ? \Carbon\Carbon::parse($fromTime)->format('h:i A') : 'N/A',
+                'to_time' => $toTime ? \Carbon\Carbon::parse($toTime)->format('h:i A') : 'N/A',
+                'raw_from' => $fromTime, // for comparison
+                'raw_to' => $toTime,
+                'amount' => $row->amount,
+                'name' => $row->name,
+                'isAC' => $row->ac_charges ?? false,
             ];
         });
-    });
-
-    $hallReceipts = Receipt::with('hallReceipt')
-    ->where('receipt_type_id', 9)
-    ->where('special_date', $today)
-    ->where('cancelled', false)
-    ->get();
-
-// Step 1: Map raw data first
-$hallBookingData = $hallReceipts->map(function ($receipt) {
-    $hall = $receipt->hallReceipt;
-    $fromTime = $hall?->from_time ? \Carbon\Carbon::parse($hall->from_time)->format('H:i:s') : null;
-    $toTime = $hall?->to_time ? \Carbon\Carbon::parse($hall->to_time)->format('H:i:s') : null;
-
-    return [
-        'receipt_id' => $receipt->id,
-        'hall_name' => $hall?->hall ?? 'N/A',
-        'from_time' => $fromTime ? \Carbon\Carbon::parse($fromTime)->format('h:i A') : 'N/A',
-        'to_time' => $toTime ? \Carbon\Carbon::parse($toTime)->format('h:i A') : 'N/A',
-        'raw_from' => $fromTime, // for comparison
-        'raw_to' => $toTime,
-        'amount' => $receipt->amount,
-        'name' => $receipt->name,
-        'isAC' => $hall?->ac_charges ?? false,
-    ];
-});
 
 // Step 2: Group by name + from_time + to_time
 $grouped = $hallBookingData->groupBy(function ($item) {
@@ -98,57 +120,70 @@ $finalCount = $finalData->count();
 
     
     
-    $prasadReceipts = Receipt::where('receipt_type_id', 15)
-                    ->where('special_date',$today)
-                    ->where("cancelled", false)
-                    ->get();
-    
-    $prasadReceiptDetails = $prasadReceipts->map(function ($receipt) {
+        $prasadRows = DB::table('receipts')
+            ->where('receipt_type_id', 15)
+            ->where('special_date', $today)
+            ->where('cancelled', false)
+            ->select([
+                'id as receipt_id',
+                'name as name',
+                'amount as amount',
+            ])
+            ->get();
+
+        $prasadReceiptDetails = $prasadRows->map(function ($row) {
             return [
-                'receipt_id' => $receipt->id,
-                'person_name' => $receipt->name ? $receipt->name : "N/A", // Fallback if hallReceipt is null
-                'amount' => $receipt->amount,
+                'receipt_id' => $row->receipt_id,
+                'person_name' => $row->name ? $row->name : "N/A",
+                'amount' => $row->amount,
             ];
-    });
+        });
 
-    $totalPoojas = $poojaDetails->count();
-    $totalHallBookings = $hallReceipts->count();
-    $totalPrasadCount = $prasadReceiptDetails->count();
+        $totalPoojas = $poojaDetails->count();
+        $totalHallBookings = $hallRows->count();
+        $totalPrasadCount = $prasadReceiptDetails->count();
 
-    $sareeReceipt = Receipt::with('sareeReceipt')
-                            ->where("cancelled", false)
-                            ->whereHas('sareeReceipt', function($query) use ($date) {
-                                $query->where('saree_draping_date_morning',$date);
-                            })
-                            ->first();
+        $sareeRow = DB::table('receipts')
+            ->join('saree_receipts', 'saree_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('saree_receipts.saree_draping_date_morning', $date)
+            ->select([
+                'saree_receipts.saree_draping_date_morning as saree_draping_date_morning',
+                'saree_receipts.return_saree as return_saree',
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->first();
 
-                            if ($sareeReceipt) {
-                                $sareeDetails = [
-                                    'saree_draping_date_morning' => $sareeReceipt->sareeReceipt->saree_draping_date_morning,
-                                    'return_saree' => $sareeReceipt->sareeReceipt->return_saree,
-                                    'name' => $sareeReceipt->name,
-                                    'gotra' => $sareeReceipt->gotra,
-                                ];
-                            } else {
-                                // Handle the case where no matching receipt was found
-                                $sareeDetails = null;
-                            }
+        if ($sareeRow) {
+            $sareeDetails = [
+                'saree_draping_date_morning' => $sareeRow->saree_draping_date_morning,
+                'return_saree' => $sareeRow->return_saree,
+                'name' => $sareeRow->name,
+                'gotra' => $sareeRow->gotra,
+            ];
+        } else {
+            $sareeDetails = null;
+        }
 
-    $uparaneReceipt = Receipt::with('uparaneReceipt')
-                    ->where("cancelled", false)
-                    ->whereHas('uparaneReceipt', function($query) use ($date) {
-                        $query->where('uparane_draping_date_morning',$date);
-                    })
-                    ->first();
-                    if ($uparaneReceipt) {
-                       $uparaneDetails = [
-                        'name' => $uparaneReceipt->name,
-                        'gotra' => $uparaneReceipt->gotra,
-                    ];
-                } else {
-                    // Handle the case where no matching receipt was found
-                    $uparaneDetails = null;
-            }
+        $uparaneRow = DB::table('receipts')
+            ->join('uparane_receipts', 'uparane_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('uparane_receipts.uparane_draping_date_morning', $date)
+            ->select([
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->first();
+
+        if ($uparaneRow) {
+            $uparaneDetails = [
+                'name' => $uparaneRow->name,
+                'gotra' => $uparaneRow->gotra,
+            ];
+        } else {
+            $uparaneDetails = null;
+        }
                             
         return $this->sendResponse(["ProfileCount"=>$profileCount,
                                 'ReceiptCount'=>$receiptCountToday,

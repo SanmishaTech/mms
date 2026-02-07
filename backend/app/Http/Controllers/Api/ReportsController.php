@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Mpdf\Config\FontVariables;
 use Mpdf\Config\ConfigVariables;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Api\BaseController;
 
@@ -1513,27 +1514,36 @@ class ReportsController extends BaseController
     {
         $date = $request->input('date');
 
-        $receipts = Receipt::with(['receiptType','poojas.poojaType.devta']) // Eager load related poojas and receiptType
-             ->where("cancelled", false)
-             ->whereNull('special_date')
+        $poojaRowsQuery = DB::table('receipts')
+            ->join('poojas', 'poojas.receipt_id', '=', 'receipts.id')
+            ->leftJoin('pooja_types', 'pooja_types.id', '=', 'poojas.pooja_type_id')
+            ->leftJoin('devtas', 'devtas.id', '=', 'pooja_types.devta_id')
+            ->where('receipts.cancelled', false)
+            ->whereNull('receipts.special_date')
+            ->select([
+                'devtas.devta_name as devtaName',
+                'receipts.gotra as gotra',
+                'receipts.name as name',
+            ]);
 
-            //  ->whereHas('receiptType', function ($query) use ($date) {
-            //         $query->where('is_pooja', true);
-            // })
-            ->whereHas('poojas', function ($query) use ($date) {
-                // Apply the condition on pooja's date column
-                if ($date) {
-                    $query->where('date', $date); // Change 'date' to the actual column name in poojas table
-                }
-            });
-    
-        $receipts = $receipts->get();
-       
-        // $poojaTypeAndGotraCounts = $receipts->flatMap(function ($receipt) use ($date) {
-        //     return $receipt->poojas->filter(function ($puja) use ($date) {
-        //         return !$date || $puja->date == $date; // Apply date filter if provided
-        //     })->map(function ($puja) use ($receipt) {
-        //         return [
+        if ($date) {
+            $poojaRowsQuery->where('poojas.date', $date);
+        }
+
+        $poojaTypeAndGotraCountsRaw = [];
+        $totalCount = 0;
+
+        foreach ($poojaRowsQuery->cursor() as $row) {
+            $devtaName = $row->devtaName ?? 'N/A';
+            $gotra = $row->gotra ?? 'N/A';
+
+            $poojaTypeAndGotraCountsRaw[$devtaName][$gotra][] = [
+                'devtaName' => $devtaName,
+                'gotra' => $gotra,
+                'name' => $row->name,
+            ];
+            $totalCount++;
+        }
         //             'receiptType' => $receipt->receiptType->receipt_type,  // Include the receiptType
         //             'poojaType' => $puja->poojaType->pooja_type,   // Include poojaType
         //             'gotra' => $receipt->gotra,                     // Include gotra from the receipt
@@ -1548,128 +1558,142 @@ class ReportsController extends BaseController
         //           });
         // });
 
-        $poojaTypeAndGotraCounts = $receipts->flatMap(function ($receipt) use ($date) {
-            return $receipt->poojas->filter(function ($puja) use ($date) {
-                return !$date || $puja->date == $date;
-            })->map(function ($puja) use ($receipt) {
-                return [
-                    'devtaName' => $puja->poojaType->devta->devta_name,  // ✅ Use devtaName here
-                    'gotra' => $receipt->gotra,
-                    'name' => $receipt->name,
-                ];
+        $poojaTypeAndGotraCounts = collect($poojaTypeAndGotraCountsRaw)->map(function ($gotraGroups) {
+            return collect($gotraGroups)->map(function ($entries) {
+                return collect($entries);
             });
-        })
-        ->groupBy('devtaName') // ✅ Group by Devta Name
-        ->map(function ($groupedByDevta) {
-            return $groupedByDevta->groupBy('gotra'); // ✅ Group by Gotra
         });
-        
-    
-        // Calculate the total count (number of records)
-        $totalCount = $poojaTypeAndGotraCounts->flatten()->count();
     
         // uparane and saree start
-        $sareeReceipts = Receipt::with('sareeReceipt')
-        ->where("cancelled", false)
-        ->whereHas('sareeReceipt', function($query) use ($date) {
-            $query->where('saree_draping_date_morning', $date);
-        })
-        ->get();
-    
-      if ($sareeReceipts->isNotEmpty()) {
-        $sareeDetails = $sareeReceipts->map(function ($sareeReceipt) {
-            return [
-                'saree_draping_date_morning' => $sareeReceipt->sareeReceipt->saree_draping_date_morning,
-                'return_saree' => $sareeReceipt->sareeReceipt->return_saree,
-                'name' => $sareeReceipt->name,
-                'gotra' => $sareeReceipt->gotra,
-            ];
-        });
-      } else {
-        $sareeDetails = [];
-     }
+        $sareeRows = DB::table('receipts')
+            ->join('saree_receipts', 'saree_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('saree_receipts.saree_draping_date_morning', $date)
+            ->select([
+                'saree_receipts.saree_draping_date_morning as saree_draping_date_morning',
+                'saree_receipts.return_saree as return_saree',
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->get();
+
+        if ($sareeRows->isNotEmpty()) {
+            $sareeDetails = $sareeRows->map(function ($row) {
+                return [
+                    'saree_draping_date_morning' => $row->saree_draping_date_morning,
+                    'return_saree' => $row->return_saree,
+                    'name' => $row->name,
+                    'gotra' => $row->gotra,
+                ];
+            });
+        } else {
+            $sareeDetails = [];
+        }
 
         // saree evening
-        $sareeEveningReceipts = Receipt::with('sareeReceipt')
-        ->where("cancelled", false)
-        ->whereHas('sareeReceipt', function($query) use ($date) {
-            $query->where('saree_draping_date_evening', $date);
-        })
-        ->get();
+        $sareeEveningRows = DB::table('receipts')
+            ->join('saree_receipts', 'saree_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('saree_receipts.saree_draping_date_evening', $date)
+            ->select([
+                'saree_receipts.saree_draping_date_evening as saree_draping_date_evening',
+                'saree_receipts.return_saree as return_saree',
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->get();
 
-            if ($sareeEveningReceipts->isNotEmpty()) {
-                $sareeEveningDetails = $sareeEveningReceipts->map(function ($sareeEveningReceipts) {
-                    return [
-                        'saree_draping_date_evening' => $sareeEveningReceipts->sareeReceipt->saree_draping_date_evening,
-                        'return_saree' => $sareeEveningReceipts->sareeReceipt->return_saree,
-                        'name' => $sareeEveningReceipts->name,
-                        'gotra' => $sareeEveningReceipts->gotra,
-                    ];
-                });
-            } else {
-                $sareeEveningDetails = [];
-            }
+        if ($sareeEveningRows->isNotEmpty()) {
+            $sareeEveningDetails = $sareeEveningRows->map(function ($row) {
+                return [
+                    'saree_draping_date_evening' => $row->saree_draping_date_evening,
+                    'return_saree' => $row->return_saree,
+                    'name' => $row->name,
+                    'gotra' => $row->gotra,
+                ];
+            });
+        } else {
+            $sareeEveningDetails = [];
+        }
         // saree evening end
     
-        $uparaneReceipts = Receipt::with('uparaneReceipt')
-        ->where("cancelled", false)
-        ->whereHas('uparaneReceipt', function($query) use ($date) {
-            $query->where('uparane_draping_date_morning', $date);
-        })
-        ->get();
+        $uparaneRows = DB::table('receipts')
+            ->join('uparane_receipts', 'uparane_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('uparane_receipts.uparane_draping_date_morning', $date)
+            ->select([
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->get();
 
-        if ($uparaneReceipts->isNotEmpty()) {
-        $uparaneDetails = $uparaneReceipts->map(function ($receipt) {
-            return [
-                'name' => $receipt->name,
-                'gotra' => $receipt->gotra,
-            ];
-        });
+        if ($uparaneRows->isNotEmpty()) {
+            $uparaneDetails = $uparaneRows->map(function ($row) {
+                return [
+                    'name' => $row->name,
+                    'gotra' => $row->gotra,
+                ];
+            });
         } else {
-        $uparaneDetails = [];
+            $uparaneDetails = [];
         }
 
         // uparane evening start
-        $uparaneEveningReceipts = Receipt::with('uparaneReceipt')
-        ->where("cancelled", false)
-        ->whereHas('uparaneReceipt', function($query) use ($date) {
-            $query->where('uparane_draping_date_evening', $date);
-        })
-        ->get();
+        $uparaneEveningRows = DB::table('receipts')
+            ->join('uparane_receipts', 'uparane_receipts.receipt_id', '=', 'receipts.id')
+            ->where('receipts.cancelled', false)
+            ->where('uparane_receipts.uparane_draping_date_evening', $date)
+            ->select([
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->get();
 
-        if ($uparaneEveningReceipts->isNotEmpty()) {
-        $uparaneEveningDetails = $uparaneEveningReceipts->map(function ($receipt) {
-            return [
-                'name' => $receipt->name,
-                'gotra' => $receipt->gotra,
-            ];
-        });
+        if ($uparaneEveningRows->isNotEmpty()) {
+            $uparaneEveningDetails = $uparaneEveningRows->map(function ($row) {
+                return [
+                    'name' => $row->name,
+                    'gotra' => $row->gotra,
+                ];
+            });
         } else {
-        $uparaneEveningDetails = [];
+            $uparaneEveningDetails = [];
         }
         // uparane evening end
         // uparane and saree end
 
         // specialDate start
-        $specialDateReceiptsQuery = Receipt::with(['receiptType']) // Eager load related poojas and receiptType
-        ->where("cancelled", false)
-        ->where("special_date",$date)
-        ->where("receipt_type_id", '!=', 9); // Exclude receipt_type_id = 9
+        $specialDateRows = DB::table('receipts')
+            ->join('receipt_types', 'receipt_types.id', '=', 'receipts.receipt_type_id')
+            ->where('receipts.cancelled', false)
+            ->where('receipts.special_date', $date)
+            ->where('receipts.receipt_type_id', '!=', 9)
+            ->select([
+                'receipt_types.receipt_type as receiptTypeName',
+                'receipts.name as name',
+                'receipts.gotra as gotra',
+            ])
+            ->get();
 
-        // Get count
-        $specialDateReceiptCount = $specialDateReceiptsQuery->count();
+        $specialDateReceiptCount = $specialDateRows->count();
 
-        // Get records
-        $specialDateReceipts = $specialDateReceiptsQuery->get();
-
-        $groupedReceipts = $specialDateReceipts->groupBy(function ($receipt) {
-            return $receipt->receiptType->receipt_type ?? 'Unknown Type'; // Group by receipt type name
-        })->map(function ($group) {
-            return $group->groupBy('gotra'); // Then group by gotra
-        });
+        $groupedReceipts = $specialDateRows
+            ->groupBy(function ($row) {
+                return $row->receiptTypeName ?? 'Unknown Type';
+            })
+            ->map(function ($group) {
+                return $group->groupBy('gotra');
+            });
         // special Date end
     
-        if(!$receipts){
+        if (
+            $totalCount === 0 &&
+            empty($sareeDetails) &&
+            empty($sareeEveningDetails) &&
+            empty($uparaneDetails) &&
+            empty($uparaneEveningDetails) &&
+            $specialDateReceiptCount === 0
+        ) {
             return $this->sendError("receipts not found", ['error'=>['receipts not found']]);
         }
         

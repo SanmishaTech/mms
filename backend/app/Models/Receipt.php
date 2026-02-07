@@ -166,10 +166,12 @@ class Receipt extends Model
         ];
          
          $apiKey = config('data.whatsapp.api_key');
+        $whatsAppUrl = config('data.whatsapp.whatsAppUrl');
+
           $response = Http::withHeaders([
               'Authorization' => 'Bearer '.$apiKey,
               'Content-Type' => 'application/json',
-          ])->post('https://graph.facebook.com/v22.0/659774710543447/messages', $payload);
+          ])->post($whatsAppUrl, $payload);
 
           // Log or handle the response
           if ($response->successful()) {
@@ -208,10 +210,12 @@ class Receipt extends Model
       ];
        
        $apiKey = config('data.whatsapp.api_key');
+       $whatsAppUrl = config('data.whatsapp.whatsAppUrl');
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer '.$apiKey,
             'Content-Type' => 'application/json',
-        ])->post('https://graph.facebook.com/v22.0/659774710543447/messages', $payload);
+        ])->post($whatsAppUrl, $payload);
 
         // Log or handle the response
         if ($response->successful()) {
@@ -248,11 +252,11 @@ class Receipt extends Model
   ];
    
    $apiKey = config('data.whatsapp.api_key');
+    $whatsAppUrl = config('data.whatsapp.whatsAppUrl');
     $response = Http::withHeaders([
         'Authorization' => 'Bearer '.$apiKey,
         'Content-Type' => 'application/json',
-    ])->post('https://graph.facebook.com/v22.0/659774710543447/messages', $payload);
-
+    ])->post($whatsAppUrl, $payload);
     // Log or handle the response
     if ($response->successful()) {
         \Log::info('Prasad WhatsApp message sent successfully.');
